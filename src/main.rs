@@ -1,20 +1,69 @@
+use crossterm::{
+    cursor,
+    event::{self, KeyCode, KeyEvent, KeyModifiers},
+    execute,
+    terminal::{self, ClearType},
+    ExecutableCommand,
+};
+use regex::Regex;
 use std::{
     env,
-    io::{stdin, stdout, Write},
+    fs::{File, OpenOptions},
+    io::{self, BufRead, BufReader, Write},
     path::Path,
     process::{Child, Command, Stdio},
+    sync::{Arc, Mutex},
 };
 
+const HISTORY_FILE: &str = "history.txt";
+
+fn load_history() -> Arc<Mutex<Vec<String>>> {
+    let path = Path::new(HISTORY_FILE);
+    let history = if path.exists() {
+        let file = File::open(path).expect("Unable to open history file");
+        let reader = BufReader::new(file);
+        reader.lines().filter_map(Result::ok).collect()
+    } else {
+        Vec::new()
+    };
+    Arc::new(Mutex::new(history))
+}
+
+fn save_to_history(command: &str) {
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(HISTORY_FILE)
+        .expect("Unable to open history file");
+    writeln!(file, "{}", command).expect("Unable to write to history file");
+}
+
+fn search_history(history: &Arc<Mutex<Vec<String>>>, query: &str) -> Vec<String> {
+    let history = history.lock().unwrap();
+    let regex = Regex::new(&format!("(?i){}", regex::escape(query))).unwrap();
+    history
+        .iter()
+        .filter(|entry| regex.is_match(entry))
+        .cloned()
+        .collect()
+}
+
 fn main() {
+    let history = load_history();
+
     loop {
         print!("> ");
-        stdout().flush();
+        io::stdout().flush().unwrap();
 
         let mut input = String::new();
-        stdin().read_line(&mut input).unwrap();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
 
-        // must be peekable so we know when we are on the last command
-        let mut commands = input.trim().split(" | ").peekable();
+        // Save command to history
+        save_to_history(input);
+
+        // Handle command input
+        let mut commands = input.split(" | ").peekable();
         let mut previous_command = None;
 
         while let Some(command) = commands.next() {
@@ -29,7 +78,6 @@ fn main() {
                     if let Err(e) = env::set_current_dir(&root) {
                         eprintln!("{}", e);
                     }
-
                     previous_command = None;
                 }
                 "exit" => return,
@@ -39,12 +87,8 @@ fn main() {
                     });
 
                     let stdout = if commands.peek().is_some() {
-                        // there is another command piped behind this one
-                        // prepare to send output to the next command
                         Stdio::piped()
                     } else {
-                        // there are no more commands piped behind this one
-                        // send output to shell stdout
                         Stdio::inherit()
                     };
 
@@ -68,8 +112,24 @@ fn main() {
         }
 
         if let Some(mut final_command) = previous_command {
-            // block until the final command has finished
-            final_command.wait();
+            final_command.wait().unwrap();
+        }
+
+        // Handle search functionality
+        let mut search_input = String::new();
+        print!("Search history: ");
+        io::stdout().flush().unwrap();
+        io::stdin().read_line(&mut search_input).unwrap();
+        let search_query = search_input.trim();
+
+        let matches = search_history(&history, search_query);
+        if !matches.is_empty() {
+            println!("Matching commands:");
+            for entry in matches {
+                println!("{}", entry);
+            }
+        } else {
+            println!("No matching commands found.");
         }
     }
 }
