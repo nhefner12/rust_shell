@@ -14,8 +14,6 @@ fn main() {
         let command = parts.next().unwrap();
         let args = parts;
 
-        
-
         match command {
             "cd" => {
                 // default to '/' as new directory if one was not provided
@@ -25,6 +23,7 @@ fn main() {
                     eprintln!("{}", e);
                 }
             },
+            "exit" => return,
             command => {
                 let mut child = Command::new(command)
                     .args(args)
@@ -34,6 +33,5 @@ fn main() {
                 child.wait();
             }
         }
-        
     };
 }
